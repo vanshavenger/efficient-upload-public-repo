@@ -8,6 +8,8 @@ import { v4 } from "uuid";
 import { logger } from "hono/logger";
 import { cors } from "hono/cors";
 import { requestId } from "hono/request-id";
+import { jwt } from "hono/jwt";
+import { sign } from "hono/jwt";
 
 const app = new Hono();
 app.use(logger());
@@ -25,10 +27,53 @@ interface CloudinaryWebhookData {
   folder: string;
 }
 
+interface SignInBody {
+  username: string;
+  password: string;
+}
+
+const JWT_SECRET = process.env.JWT_SECRET || "default-secret-change-me";
+
 app.use("*", cors());
 app.use("*", requestId());
 
+const jwtMiddleware = jwt({
+  secret: JWT_SECRET,
+});
+
 app.get("/", (c) => c.text("Hello Hono!"));
+
+app.post("/sign-in", async (c) => {
+  try {
+    const { username, password } = await c.req.json<SignInBody>();
+
+    // TODO: actual user authentication logic here
+    if (username === "demo" && password === "password") {
+      const token = await sign({ username }, JWT_SECRET);
+      return c.json({ token });
+    } else {
+      return c.json({ error: "Invalid credentials" }, 401);
+    }
+  } catch (error) {
+    console.error("Error in /sign-in:", error);
+    return c.json(
+      { error: "Internal server error", details: (error as Error).message },
+      500,
+    );
+  }
+});
+
+app.post("/sign-out", (c) => {
+  return c.json({
+    message:
+      "Successfully signed out. Please remove the token from the client.",
+  });
+});
+
+app.get("/protected", jwtMiddleware, (c) => {
+  const payload = c.get("jwtPayload");
+  return c.json({ message: "This is a protected route", user: payload });
+});
 
 app.post("/wh/save-in-db/:whsecret", async (c) => {
   try {
@@ -78,7 +123,7 @@ app.post("/wh/save-in-db/:whsecret", async (c) => {
   }
 });
 
-app.get("/generate-signed-url/:userId", async (c) => {
+app.get("/generate-signed-url/:userId", jwtMiddleware, async (c) => {
   try {
     const userId = c.req.param().userId;
     if (!userId) {
